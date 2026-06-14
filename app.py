@@ -744,6 +744,35 @@ def _aggregate_visualization_window(
     if vis_df.empty:
         return pd.DataFrame()
 
+    if resolution == "Annual":
+        agg = (
+            vis_df.groupby("month_period", as_index=False)
+            .agg(
+                renewable_power_mw=("renewable_power_mw", "mean"),
+                h2_prod_kg_per_h=("h2_prod_kg_per_h", "mean"),
+                h2_to_ptmeoh_kg_per_h=("h2_to_ptmeoh_kg_per_h", "mean"),
+                tank_soc_kg_h2=("tank_soc_kg_h2", "mean"),
+                meoh_t_per_h=("meoh_t_per_h", "sum"),
+                h2_purge_plot_kg_per_h=("h2_purge_plot_kg_per_h", "mean"),
+                h2_recycle_plot_kg_per_h=("h2_recycle_plot_kg_per_h", "mean"),
+            )
+        )
+        agg["plot_time"] = agg["month_period"].dt.to_timestamp()
+        agg["plot_label"] = agg["month_period"].astype(str)
+        return agg[
+            [
+                "plot_time",
+                "plot_label",
+                "renewable_power_mw",
+                "h2_prod_kg_per_h",
+                "h2_to_ptmeoh_kg_per_h",
+                "tank_soc_kg_h2",
+                "meoh_t_per_h",
+                "h2_purge_plot_kg_per_h",
+                "h2_recycle_plot_kg_per_h",
+            ]
+        ]
+
     if resolution == "Daily":
         agg = (
             vis_df.groupby("date", as_index=False)
@@ -758,12 +787,15 @@ def _aggregate_visualization_window(
             )
             .rename(columns={"date": "plot_time"})
         )
+        agg["plot_label"] = pd.to_datetime(agg["plot_time"]).dt.strftime("%Y-%m-%d")
         return agg
 
     out = vis_df.copy().rename(columns={"timestamp": "plot_time"})
+    out["plot_label"] = pd.to_datetime(out["plot_time"]).dt.strftime("%Y-%m-%d %H:%M")
     return out[
         [
             "plot_time",
+            "plot_label",
             "renewable_power_mw",
             "h2_prod_kg_per_h",
             "h2_to_ptmeoh_kg_per_h",
@@ -774,14 +806,13 @@ def _aggregate_visualization_window(
         ]
     ]
 
-
 def build_annual_overview_controls(ts: pd.DataFrame) -> dict:
     vis_df = _build_visualization_dataframe(ts)
     if vis_df.empty:
         return {
             "vis_df": vis_df,
             "window_df": pd.DataFrame(),
-            "resolution": "Daily",
+            "resolution": "Annual",
             "month_label": None,
             "week_label": None,
             "h2_unit": "kg/h",
@@ -797,26 +828,14 @@ def build_annual_overview_controls(ts: pd.DataFrame) -> dict:
     control_col1, control_col2, control_col3, control_col4 = st.columns([1.15, 1.0, 0.9, 1.35])
 
     with control_col1:
-        selected_month = st.selectbox(
-            "Month",
-            available_months,
-            index=available_months.index(default_month) if default_month in available_months else 0,
-            key="viz_selected_month",
-        )
-
-    month_df = vis_df.loc[vis_df["month_label"] == selected_month].copy()
-
-    with control_col2:
         resolution = st.radio(
             "Resolution",
-            ["Daily", "Weekly detail"],
+            ["Annual", "Daily", "Weekly detail"],
             horizontal=True,
             key="viz_resolution",
         )
 
-    available_weeks = sorted(month_df["week_period"].dropna().unique().tolist())
-
-    with control_col3:
+    with control_col2:
         h2_unit = st.radio(
             "H2 units",
             ["kg/h", "t/h"],
@@ -824,22 +843,43 @@ def build_annual_overview_controls(ts: pd.DataFrame) -> dict:
             key="viz_h2_unit",
         )
 
+    selected_month = None
     selected_week = None
-    if resolution == "Weekly detail" and available_weeks:
-        with control_col4:
-            selected_week = st.selectbox(
-                "Week inside month",
-                available_weeks,
-                index=0,
-                key="viz_selected_week",
+    available_weeks: list[str] = []
+
+    if resolution in ["Daily", "Weekly detail"]:
+        with control_col3:
+            selected_month = st.selectbox(
+                "Month",
+                available_months,
+                index=available_months.index(default_month) if default_month in available_months else 0,
+                key="viz_selected_month",
             )
-        window_df = month_df.loc[month_df["week_period"] == selected_week].copy()
-        agg_df = _aggregate_visualization_window(window_df, resolution="Hourly")
+
+        month_df = vis_df.loc[vis_df["month_label"] == selected_month].copy()
+        available_weeks = sorted(month_df["week_period"].dropna().unique().tolist())
+
+        if resolution == "Weekly detail" and available_weeks:
+            with control_col4:
+                selected_week = st.selectbox(
+                    "Week inside month",
+                    available_weeks,
+                    index=0,
+                    key="viz_selected_week",
+                )
+            window_df = month_df.loc[month_df["week_period"] == selected_week].copy()
+            agg_df = _aggregate_visualization_window(window_df, resolution="Hourly")
+        else:
+            with control_col4:
+                st.caption("Daily view uses the selected month aggregated by day.")
+            window_df = month_df
+            agg_df = _aggregate_visualization_window(window_df, resolution="Daily")
     else:
+        with control_col3:
+            st.caption("Annual view aggregates the full year by month.")
         with control_col4:
-            st.caption("Weekly detail becomes available after selecting that resolution.")
-        window_df = month_df
-        agg_df = _aggregate_visualization_window(window_df, resolution="Daily")
+            st.caption("12 points are shown, one for each month.")
+        agg_df = _aggregate_visualization_window(vis_df, resolution="Annual")
 
     purge_available = bool((vis_df["h2_purge_plot_kg_per_h"].abs() > 0).any())
     recycle_available = bool((vis_df["h2_recycle_plot_kg_per_h"].abs() > 0).any())
@@ -856,7 +896,6 @@ def build_annual_overview_controls(ts: pd.DataFrame) -> dict:
         "purge_available": purge_available,
         "recycle_available": recycle_available,
     }
-
 
 def _convert_h2_rate(series: pd.Series, h2_unit: str) -> pd.Series:
     factor = 1.0 if h2_unit == "kg/h" else 0.001
@@ -928,7 +967,9 @@ def build_integrated_h2_storage_chart(
 
     fig.update_layout(
         title=(
-            "Renewable energy, H2 production, PtMeOH feed, and H2 tank"
+            "Full-year monthly overview — renewable energy, H2 production, PtMeOH feed, and H2 tank"
+            if resolution == "Annual"
+            else "Renewable energy, H2 production, PtMeOH feed, and H2 tank"
             if resolution == "Daily"
             else "Weekly detail — renewable energy, H2 production, PtMeOH feed, and H2 tank"
         ),
@@ -938,7 +979,9 @@ def build_integrated_h2_storage_chart(
         barmode="overlay",
         margin=dict(l=20, r=20, t=60, b=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0),
-        xaxis=dict(title="Date" if resolution == "Daily" else "Timestamp"),
+        xaxis=dict(
+            title="Month" if resolution == "Annual" else "Date" if resolution == "Daily" else "Timestamp"
+        ),
         yaxis=dict(
             title="Renewable available [MW]",
             side="left",
@@ -954,7 +997,6 @@ def build_integrated_h2_storage_chart(
         ),
     )
     return fig
-
 
 def build_integrated_meoh_chart(
     window_df: pd.DataFrame,
@@ -1019,7 +1061,9 @@ def build_integrated_meoh_chart(
 
     fig.update_layout(
         title=(
-            "MeOH production and PtMeOH H2-side behavior"
+            "Full-year monthly overview — MeOH production and PtMeOH H2-side behavior"
+            if resolution == "Annual"
+            else "MeOH production and PtMeOH H2-side behavior"
             if resolution == "Daily"
             else "Weekly detail — MeOH production and PtMeOH H2-side behavior"
         ),
@@ -1029,7 +1073,9 @@ def build_integrated_meoh_chart(
         barmode="group",
         margin=dict(l=20, r=20, t=60, b=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0),
-        xaxis=dict(title="Date" if resolution == "Daily" else "Timestamp"),
+        xaxis=dict(
+            title="Month" if resolution == "Annual" else "Date" if resolution == "Daily" else "Timestamp"
+        ),
         yaxis=dict(
             title="MeOH production [t per period]",
             side="left",
@@ -1045,7 +1091,7 @@ def build_integrated_meoh_chart(
         ),
     )
     return fig
-
+    
 def build_kpi_export_dataframe(kpis: dict) -> pd.DataFrame:
     main_kpis = [
         ("annual_methanol_t", kpis.get("annual_methanol_t")),
