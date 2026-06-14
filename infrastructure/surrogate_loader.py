@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import importlib.util
 import json
+from typing import Any
 
 import joblib
 import numpy as np
@@ -180,7 +181,7 @@ def _load_txt_parameters(txt_path: Path) -> dict:
     except Exception:
         pass
 
-    params: dict = {}
+    params: dict[str, Any] = {}
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -223,12 +224,45 @@ def _load_py_metadata(py_path: Path) -> dict:
         return {}
 
 
+def _extract_predictor_candidate(model_object):
+    if hasattr(model_object, "predict"):
+        return model_object
+
+    if isinstance(model_object, dict):
+        preferred_keys = [
+            "model",
+            "predictor",
+            "estimator",
+            "pipeline",
+            "regressor",
+            "surrogate",
+            "best_model",
+        ]
+        for key in preferred_keys:
+            candidate = model_object.get(key)
+            if hasattr(candidate, "predict"):
+                return candidate
+
+        for candidate in model_object.values():
+            if hasattr(candidate, "predict"):
+                return candidate
+
+    return None
+
+
+def _append_missing_flag(package_status: dict, flag: str) -> None:
+    missing = package_status.setdefault("missing_files", [])
+    if flag not in missing:
+        missing.append(flag)
+
+
 def load_surrogate_bundle(project_root: Path, model_name: str, library_name: str) -> SurrogateBundle:
     project_root = Path(project_root)
     bundle_dir = project_root / "models" / "packages" / library_name / model_name
 
     registry = ModelRegistry(project_root)
     catalog = registry.discover_packages()
+
     row = None
     if not catalog.empty and {"library", "model_name"}.issubset(catalog.columns):
         matched = catalog[
@@ -246,7 +280,7 @@ def load_surrogate_bundle(project_root: Path, model_name: str, library_name: str
         bool(joblib_files) and bool(py_files) and bool(txt_files)
     )
 
-    missing_files = []
+    missing_files: list[str] = []
     if isinstance(row, dict) and "missing_files" in row:
         if isinstance(row["missing_files"], str) and row["missing_files"].strip():
             missing_files = [x.strip() for x in row["missing_files"].split(",") if x.strip()]
@@ -261,8 +295,16 @@ def load_surrogate_bundle(project_root: Path, model_name: str, library_name: str
     metadata = _load_py_metadata(py_files[0]) if py_files else {}
     parameters = _load_txt_parameters(txt_files[0]) if txt_files else {}
 
-    input_column = str(parameters.get("Input Column") or metadata.get("input_column") or "h2_flow_kg_per_h")
-    output_column = str(parameters.get("Output Column") or metadata.get("output_column") or model_name)
+    input_column = str(
+        parameters.get("Input Column")
+        or metadata.get("input_column")
+        or "h2_flow_kg_per_h"
+    )
+    output_column = str(
+        parameters.get("Output Column")
+        or metadata.get("output_column")
+        or model_name
+    )
 
     package_status = {
         "ready_for_runtime": ready_for_runtime,
@@ -271,7 +313,14 @@ def load_surrogate_bundle(project_root: Path, model_name: str, library_name: str
 
     if ready_for_runtime and joblib_files:
         try:
-            model_object = joblib.load(joblib_files[0])
+            raw_model_object = joblib.load(joblib_files[0])
+            model_object = _extract_predictor_candidate(raw_model_object)
+            if model_object is None:
+                raise TypeError(
+                    f"Loaded joblib for '{model_name}' does not contain a valid predictor with "
+                    f"predict(). Got {type(raw_model_object).__name__}"
+                )
+
             predictor = RuntimeJoblibPredictor(
                 model_object=model_object,
                 model_name=model_name,
@@ -286,8 +335,7 @@ def load_surrogate_bundle(project_root: Path, model_name: str, library_name: str
                 output_column=output_column,
             )
             package_status["ready_for_runtime"] = False
-            if ".joblib_load_failed" not in package_status["missing_files"]:
-                package_status["missing_files"].append(".joblib_load_failed")
+            _append_missing_flag(package_status, ".invalid_runtime_predictor")
     else:
         predictor = MockSurrogate(
             model_name=model_name,
