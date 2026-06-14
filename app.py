@@ -660,6 +660,7 @@ def build_balance_bar_chart(ts: pd.DataFrame):
     )
     return fig
 
+# Charts integration 14.06.2026 by Victor Alvarez
 
 def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1") -> bytes:
     last_error: Exception | None = None
@@ -676,6 +677,374 @@ def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1") -> by
         f"Excel export failed because no supported writer engine is available. Last error: {last_error}"
     )
 
+def _series_first_existing(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def _build_visualization_dataframe(ts: pd.DataFrame) -> pd.DataFrame:
+    if ts is None or ts.empty:
+        return pd.DataFrame()
+
+    df = ts.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+
+    df["date"] = df["timestamp"].dt.floor("D")
+    df["month_period"] = df["timestamp"].dt.to_period("M")
+    df["month_label"] = df["timestamp"].dt.strftime("%Y-%m")
+    df["week_period"] = df["timestamp"].dt.to_period("W-MON").astype(str)
+
+    purge_col = _series_first_existing(
+        df,
+        [
+            "h2_purge_kg_per_h",
+            "purge_h2_kg_per_h",
+            "h2purgekgperh",
+            "H2Purge_kg_per_h",
+            "Model_H2_Purge_kg_per_h",
+        ],
+    )
+    recycle_col = _series_first_existing(
+        df,
+        [
+            "h2_recycle_kg_per_h",
+            "recycle_h2_kg_per_h",
+            "h2recyclekgperh",
+            "H2Recycle_kg_per_h",
+            "Model_H2_Recycle_kg_per_h",
+        ],
+    )
+
+    if purge_col is None:
+        df["h2_purge_proxy_kg_per_h"] = 0.0
+        purge_col = "h2_purge_proxy_kg_per_h"
+
+    if recycle_col is None:
+        df["h2_recycle_proxy_kg_per_h"] = 0.0
+        recycle_col = "h2_recycle_proxy_kg_per_h"
+
+    df["meoh_t_per_h"] = pd.to_numeric(df.get("methanol_t_per_h", 0.0), errors="coerce").fillna(0.0)
+    df["h2_prod_kg_per_h"] = pd.to_numeric(df.get("h2_produced_kg_per_h", 0.0), errors="coerce").fillna(0.0)
+    df["h2_to_ptmeoh_kg_per_h"] = pd.to_numeric(df.get("h2_to_ptmeoh_kg_per_h", 0.0), errors="coerce").fillna(0.0)
+    df["tank_soc_kg_h2"] = pd.to_numeric(df.get("tank_soc_kg_h2", 0.0), errors="coerce").fillna(0.0)
+    df["renewable_power_mw"] = pd.to_numeric(df.get("renewable_power_mw", 0.0), errors="coerce").fillna(0.0)
+    df["h2_purge_plot_kg_per_h"] = pd.to_numeric(df.get(purge_col, 0.0), errors="coerce").fillna(0.0)
+    df["h2_recycle_plot_kg_per_h"] = pd.to_numeric(df.get(recycle_col, 0.0), errors="coerce").fillna(0.0)
+
+    return df
+
+
+def _aggregate_visualization_window(
+    vis_df: pd.DataFrame,
+    resolution: str,
+) -> pd.DataFrame:
+    if vis_df.empty:
+        return pd.DataFrame()
+
+    if resolution == "Daily":
+        agg = (
+            vis_df.groupby("date", as_index=False)
+            .agg(
+                renewable_power_mw=("renewable_power_mw", "mean"),
+                h2_prod_kg_per_h=("h2_prod_kg_per_h", "mean"),
+                h2_to_ptmeoh_kg_per_h=("h2_to_ptmeoh_kg_per_h", "mean"),
+                tank_soc_kg_h2=("tank_soc_kg_h2", "mean"),
+                meoh_t_per_h=("meoh_t_per_h", "sum"),
+                h2_purge_plot_kg_per_h=("h2_purge_plot_kg_per_h", "mean"),
+                h2_recycle_plot_kg_per_h=("h2_recycle_plot_kg_per_h", "mean"),
+            )
+            .rename(columns={"date": "plot_time"})
+        )
+        return agg
+
+    out = vis_df.copy().rename(columns={"timestamp": "plot_time"})
+    return out[
+        [
+            "plot_time",
+            "renewable_power_mw",
+            "h2_prod_kg_per_h",
+            "h2_to_ptmeoh_kg_per_h",
+            "tank_soc_kg_h2",
+            "meoh_t_per_h",
+            "h2_purge_plot_kg_per_h",
+            "h2_recycle_plot_kg_per_h",
+        ]
+    ]
+
+
+def build_annual_overview_controls(ts: pd.DataFrame) -> dict:
+    vis_df = _build_visualization_dataframe(ts)
+    if vis_df.empty:
+        return {
+            "vis_df": vis_df,
+            "window_df": pd.DataFrame(),
+            "resolution": "Daily",
+            "month_label": None,
+            "week_label": None,
+            "h2_unit": "kg/h",
+            "available_months": [],
+            "available_weeks": [],
+            "purge_available": False,
+            "recycle_available": False,
+        }
+
+    available_months = sorted(vis_df["month_label"].dropna().unique().tolist())
+    default_month = available_months[0] if available_months else None
+
+    control_col1, control_col2, control_col3, control_col4 = st.columns([1.15, 1.0, 0.9, 1.35])
+
+    with control_col1:
+        selected_month = st.selectbox(
+            "Month",
+            available_months,
+            index=available_months.index(default_month) if default_month in available_months else 0,
+            key="viz_selected_month",
+        )
+
+    month_df = vis_df.loc[vis_df["month_label"] == selected_month].copy()
+
+    with control_col2:
+        resolution = st.radio(
+            "Resolution",
+            ["Daily", "Weekly detail"],
+            horizontal=True,
+            key="viz_resolution",
+        )
+
+    available_weeks = sorted(month_df["week_period"].dropna().unique().tolist())
+
+    with control_col3:
+        h2_unit = st.radio(
+            "H2 units",
+            ["kg/h", "t/h"],
+            horizontal=True,
+            key="viz_h2_unit",
+        )
+
+    selected_week = None
+    if resolution == "Weekly detail" and available_weeks:
+        with control_col4:
+            selected_week = st.selectbox(
+                "Week inside month",
+                available_weeks,
+                index=0,
+                key="viz_selected_week",
+            )
+        window_df = month_df.loc[month_df["week_period"] == selected_week].copy()
+        agg_df = _aggregate_visualization_window(window_df, resolution="Hourly")
+    else:
+        with control_col4:
+            st.caption("Weekly detail becomes available after selecting that resolution.")
+        window_df = month_df
+        agg_df = _aggregate_visualization_window(window_df, resolution="Daily")
+
+    purge_available = bool((vis_df["h2_purge_plot_kg_per_h"].abs() > 0).any())
+    recycle_available = bool((vis_df["h2_recycle_plot_kg_per_h"].abs() > 0).any())
+
+    return {
+        "vis_df": vis_df,
+        "window_df": agg_df,
+        "resolution": resolution,
+        "month_label": selected_month,
+        "week_label": selected_week,
+        "h2_unit": h2_unit,
+        "available_months": available_months,
+        "available_weeks": available_weeks,
+        "purge_available": purge_available,
+        "recycle_available": recycle_available,
+    }
+
+
+def _convert_h2_rate(series: pd.Series, h2_unit: str) -> pd.Series:
+    factor = 1.0 if h2_unit == "kg/h" else 0.001
+    return pd.to_numeric(series, errors="coerce").fillna(0.0) * factor
+
+
+def build_integrated_h2_storage_chart(
+    window_df: pd.DataFrame,
+    resolution: str,
+    h2_unit: str,
+    visible_series: list[str],
+):
+    fig = go.Figure()
+    if window_df is None or window_df.empty:
+        return fig
+
+    x = window_df["plot_time"]
+    h2_axis_title = f"H2 flow [{h2_unit}] / Tank inventory [kg H2]"
+
+    if "Renewable available" in visible_series:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=window_df["renewable_power_mw"],
+                mode="lines",
+                name="Renewable available",
+                yaxis="y1",
+                line=dict(color="#0b7285", width=2.5),
+            )
+        )
+
+    if "Electrolyzer H2 production" in visible_series:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=_convert_h2_rate(window_df["h2_prod_kg_per_h"], h2_unit),
+                mode="lines",
+                name="Electrolyzer H2 production",
+                yaxis="y2",
+                line=dict(color="#2f9e44", width=2.5),
+            )
+        )
+
+    if "H2 to PtMeOH" in visible_series:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=_convert_h2_rate(window_df["h2_to_ptmeoh_kg_per_h"], h2_unit),
+                mode="lines",
+                name="H2 to PtMeOH",
+                yaxis="y2",
+                line=dict(color="#4dabf7", width=2.5),
+            )
+        )
+
+    if "Tank H2 inventory" in visible_series:
+        fig.add_trace(
+            go.Bar(
+                x=x,
+                y=window_df["tank_soc_kg_h2"],
+                name="Tank H2 inventory",
+                yaxis="y2",
+                marker_color="rgba(161, 44, 123, 0.22)",
+                marker_line_color="rgba(161, 44, 123, 0.35)",
+                marker_line_width=0.5,
+                opacity=0.35,
+            )
+        )
+
+    fig.update_layout(
+        title=(
+            "Renewable energy, H2 production, PtMeOH feed, and H2 tank"
+            if resolution == "Daily"
+            else "Weekly detail — renewable energy, H2 production, PtMeOH feed, and H2 tank"
+        ),
+        paper_bgcolor="#f4f8f8",
+        plot_bgcolor="white",
+        hovermode="x unified",
+        barmode="overlay",
+        margin=dict(l=20, r=20, t=60, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0),
+        xaxis=dict(title="Date" if resolution == "Daily" else "Timestamp"),
+        yaxis=dict(
+            title="Renewable available [MW]",
+            side="left",
+            showgrid=True,
+            zeroline=False,
+        ),
+        yaxis2=dict(
+            title=h2_axis_title,
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            zeroline=False,
+        ),
+    )
+    return fig
+
+
+def build_integrated_meoh_chart(
+    window_df: pd.DataFrame,
+    resolution: str,
+    h2_unit: str,
+    visible_series: list[str],
+):
+    fig = go.Figure()
+    if window_df is None or window_df.empty:
+        return fig
+
+    x = window_df["plot_time"]
+
+    if "MeOH production" in visible_series:
+        fig.add_trace(
+            go.Bar(
+                x=x,
+                y=window_df["meoh_t_per_h"],
+                name="MeOH production",
+                yaxis="y1",
+                marker_color="rgba(218, 113, 1, 0.65)",
+                marker_line_color="rgba(172, 62, 0, 0.85)",
+                marker_line_width=0.5,
+            )
+        )
+
+    if "H2 to PtMeOH" in visible_series:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=_convert_h2_rate(window_df["h2_to_ptmeoh_kg_per_h"], h2_unit),
+                mode="lines",
+                name="H2 at PtMeOH inlet",
+                yaxis="y2",
+                line=dict(color="#4dabf7", width=2.5),
+            )
+        )
+
+    if "H2 purge" in visible_series:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=_convert_h2_rate(window_df["h2_purge_plot_kg_per_h"], h2_unit),
+                mode="lines",
+                name="H2 purge",
+                yaxis="y2",
+                line=dict(color="#a12c7b", width=2.0, dash="dot"),
+            )
+        )
+
+    if "H2 recycle" in visible_series:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=_convert_h2_rate(window_df["h2_recycle_plot_kg_per_h"], h2_unit),
+                mode="lines",
+                name="H2 recycle",
+                yaxis="y2",
+                line=dict(color="#6b7f86", width=2.0, dash="dash"),
+            )
+        )
+
+    fig.update_layout(
+        title=(
+            "MeOH production and PtMeOH H2-side behavior"
+            if resolution == "Daily"
+            else "Weekly detail — MeOH production and PtMeOH H2-side behavior"
+        ),
+        paper_bgcolor="#f4f8f8",
+        plot_bgcolor="white",
+        hovermode="x unified",
+        barmode="group",
+        margin=dict(l=20, r=20, t=60, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0),
+        xaxis=dict(title="Date" if resolution == "Daily" else "Timestamp"),
+        yaxis=dict(
+            title="MeOH production [t per period]",
+            side="left",
+            showgrid=True,
+            zeroline=False,
+        ),
+        yaxis2=dict(
+            title=f"H2-related series [{h2_unit}]",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            zeroline=False,
+        ),
+    )
+    return fig
 
 def build_kpi_export_dataframe(kpis: dict) -> pd.DataFrame:
     main_kpis = [
@@ -1479,58 +1848,83 @@ with tab2:
             st.dataframe(kpi_export_df, use_container_width=True, hide_index=True)
 
         if not ts.empty:
-            st.plotly_chart(
-                line_profile(
-                    ts.iloc[:336],
-                    ["renewable_power_mw", "power_to_electrolyzer_mw"],
-                    "Renewable and electrolyzer power — first two weeks",
-                    "Power [MW]",
-                ),
-                use_container_width=True,
-            )
+            
+            st.subheader("Integrated annual process visualization")
 
-            st.plotly_chart(
-                line_profile(
-                    ts.iloc[:336],
-                    ["h2_produced_kg_per_h", "h2_to_ptmeoh_kg_per_h", "tank_soc_kg_h2"],
-                    "Hydrogen production, PtMeOH feed, and tank state of charge — first two weeks",
-                    "H2 / SOC [kg or kg/h]",
-                ),
-                use_container_width=True,
-            )
+            viz_state = build_annual_overview_controls(ts)
+            window_df = viz_state["window_df"]
 
-            st.plotly_chart(
-                line_profile(
-                    ts.iloc[:336],
-                    ["methanol_t_per_h", "unmet_h2_kg_per_h"],
-                    "Methanol production and unmet H2 — first two weeks",
-                    "Production / unmet H2",
-                ),
-                use_container_width=True,
-            )
+            if window_df.empty:
+                st.info("No visualization window is available for the selected period.")
+            else:
+                series_col1, series_col2 = st.columns([1.15, 1.0])
 
-            st.plotly_chart(
-                build_daily_mean_chart(
-                    ts,
-                    ["renewable_power_mw", "power_to_electrolyzer_mw", "downstream_aux_power_mw"],
-                    "Daily mean power profile — full year",
-                    "Power [MW]",
-                ),
-                use_container_width=True,
-            )
+                with series_col1:
+                    visible_series_chart1 = st.multiselect(
+                        "Graph 1 visible series",
+                        [
+                            "Renewable available",
+                            "Electrolyzer H2 production",
+                            "H2 to PtMeOH",
+                            "Tank H2 inventory",
+                        ],
+                        default=[
+                            "Renewable available",
+                            "Electrolyzer H2 production",
+                            "H2 to PtMeOH",
+                            "Tank H2 inventory",
+                        ],
+                        key="graph1_visible_series",
+                    )
 
-            st.plotly_chart(
-                build_daily_mean_chart(
-                    ts,
-                    ["h2_produced_kg_per_h", "h2_to_ptmeoh_kg_per_h", "unmet_h2_kg_per_h"],
-                    "Daily mean H2 profile — full year",
-                    "H2 [kg/h]",
-                ),
-                use_container_width=True,
-            )
+                graph2_options = ["MeOH production", "H2 to PtMeOH"]
+                if viz_state["purge_available"]:
+                    graph2_options.append("H2 purge")
+                if viz_state["recycle_available"]:
+                    graph2_options.append("H2 recycle")
 
-            st.plotly_chart(build_diagnostic_event_chart(ts), use_container_width=True)
-            st.plotly_chart(build_balance_bar_chart(ts), use_container_width=True)
+                with series_col2:
+                    visible_series_chart2 = st.multiselect(
+                        "Graph 2 visible series",
+                        graph2_options,
+                        default=graph2_options,
+                        key="graph2_visible_series",
+                    )
+
+                st.caption(
+                    f"Selected month: {viz_state['month_label']} | "
+                    f"Resolution: {viz_state['resolution']} | "
+                    f"H2 units: {viz_state['h2_unit']}"
+                    + (
+                        f" | Selected week: {viz_state['week_label']}"
+                        if viz_state["week_label"] is not None
+                        else ""
+                    )
+                )
+
+                st.plotly_chart(
+                    build_integrated_h2_storage_chart(
+                        window_df=window_df,
+                        resolution=viz_state["resolution"],
+                        h2_unit=viz_state["h2_unit"],
+                        visible_series=visible_series_chart1,
+                    ),
+                    use_container_width=True,
+                )
+
+                st.plotly_chart(
+                    build_integrated_meoh_chart(
+                        window_df=window_df,
+                        resolution=viz_state["resolution"],
+                        h2_unit=viz_state["h2_unit"],
+                        visible_series=visible_series_chart2,
+                    ),
+                    use_container_width=True,
+                )
+
+            with st.expander("Existing diagnostics and annual balance", expanded=False):
+                st.plotly_chart(build_diagnostic_event_chart(ts), use_container_width=True)
+                st.plotly_chart(build_balance_bar_chart(ts), use_container_width=True)
 
             with st.expander("Surrogate and runtime diagnostics", expanded=False):
                 surrogate_info = getattr(simulation, "surrogate_info", {})
