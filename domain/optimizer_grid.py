@@ -118,11 +118,57 @@ class GridOptimizer:
             self._emit_progress(progress_callback, "optimization", case_index, max(total_cases, 1))
 
         results = pd.DataFrame(rows)
-        feasible = results[results["feasible"] == 1].copy()
+
+        if results.empty:
+            if self.logger is not None:
+                self.logger.warning(
+                    "Optimization grid completed but produced no result rows. "
+                    "No best design can be selected."
+                )
+            return GridSearchArtifacts(
+                results=results,
+                feasible_results=results.copy(),
+                best_row=pd.Series(dtype="object", name="best_row"),
+            )
+
+        if "feasible" in results.columns:
+            feasible = results[results["feasible"] == 1].copy()
+        else:
+            if self.logger is not None:
+                self.logger.warning(
+                    "Optimization results do not contain 'feasible'; falling back to the full results table."
+                )
+            feasible = pd.DataFrame()
+
         if feasible.empty:
             feasible = results.copy()
-        best = feasible.sort_values(
-            ["lcomeoh_usd_per_t_meoh", "warning_count", "total_capex_usd"],
-            ascending=[True, True, True],
-        ).iloc[0]
+            if self.logger is not None:
+                self.logger.warning(
+                    "No feasible optimization cases were found. "
+                    "The best row will be selected from the full evaluated set."
+                )
+
+        sort_cols = []
+        ascending = []
+
+        if "lcomeoh_usd_per_t_meoh" in feasible.columns:
+            sort_cols.append("lcomeoh_usd_per_t_meoh")
+            ascending.append(True)
+        if "warning_count" in feasible.columns:
+            sort_cols.append("warning_count")
+            ascending.append(True)
+        if "total_capex_usd" in feasible.columns:
+            sort_cols.append("total_capex_usd")
+            ascending.append(True)
+
+        if sort_cols:
+            best = feasible.sort_values(sort_cols, ascending=ascending).iloc[0]
+        else:
+            if self.logger is not None:
+                self.logger.warning(
+                    "Optimization results are missing the expected ranking columns. "
+                    "Falling back to the first evaluated row."
+                )
+            best = feasible.iloc[0]
+
         return GridSearchArtifacts(results=results, feasible_results=feasible, best_row=best)
