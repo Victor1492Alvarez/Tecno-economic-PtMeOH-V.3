@@ -2050,48 +2050,154 @@ with tab3:
     if optimization is None:
         st.info("Press 'Run optimization' to generate the design ranking.")
     else:
-        left, right = st.columns([1.0, 1.6])
+        if isinstance(optimization, dict):
+            best_row = optimization.get("best_row")
+            results_df = optimization.get("results")
+        else:
+            best_row = getattr(optimization, "best_row", None)
+            results_df = getattr(optimization, "results", None)
 
-        with left:
-            st.subheader("Recommended configuration")
-            st.dataframe(
-                optimization.best_row.to_frame(name="value"),
-                use_container_width=True,
+        if results_df is None:
+            st.error(
+                "The optimization finished but no results table was returned by the backend. "
+                "Check the optimizer return structure."
             )
-            st.info(
-                "Use the shortlist together with the diagnostic KPIs. A mathematically best row is not automatically a trustworthy row if "
-                "it still shows high out-of-domain fraction, severe curtailment, or low utilization."
+            st.write({"optimization_type": str(type(optimization))})
+        elif not isinstance(results_df, pd.DataFrame):
+            st.error(
+                "The optimization finished but the returned results payload is not a pandas DataFrame."
             )
-
-        with right:
-            st.plotly_chart(
-                heatmap(optimization.results, z_col="lcomeoh_usd_per_t_meoh"),
-                use_container_width=True,
+            st.write(
+                {
+                    "optimization_type": str(type(optimization)),
+                    "results_type": str(type(results_df)),
+                }
             )
+        elif results_df.empty:
+            st.warning(
+                "The optimization finished but returned an empty results table. "
+                "This usually means no grid cases were generated or all evaluations failed before producing rows."
+            )
+            st.dataframe(results_df, use_container_width=True)
+        else:
+            left, right = st.columns([1.0, 1.6])
 
-        st.subheader("Ranked shortlist")
-        shortlist = optimization.results.sort_values(
-            ["lcomeoh_usd_per_t_meoh", "warning_count"]
-        ).copy()
-        priority_cols = [
-            "case_name",
-            "electrolyzer_power_mw",
-            "module_count",
-            "storage_kg_h2",
-            "target_h2_kg_per_h",
-            "annual_methanol_t",
-            "ptmeoh_utilization_factor",
-            "renewable_utilization_fraction",
-            "curtailment_fraction",
-            "surrogate_out_of_domain_fraction",
-            "warning_count",
-            "feasible",
-            "lcomeoh_usd_per_t_meoh",
-            "npv_usd",
-        ]
-        priority_cols = [c for c in priority_cols if c in shortlist.columns]
-        st.dataframe(shortlist[priority_cols].head(20), use_container_width=True)
+            with left:
+                st.subheader("Recommended configuration")
 
+                if isinstance(best_row, pd.Series) and not best_row.empty:
+                    st.dataframe(
+                        best_row.to_frame(name="value"),
+                        use_container_width=True,
+                    )
+                elif isinstance(best_row, dict) and len(best_row) > 0:
+                    st.dataframe(
+                        pd.Series(best_row, name="value").to_frame(),
+                        use_container_width=True,
+                    )
+                else:
+                    st.warning(
+                        "No explicit best_row was returned by the optimizer. "
+                        "A fallback recommendation will be derived from the available results table."
+                    )
+
+                    fallback_df = results_df.copy()
+                    if "lcomeoh_usd_per_t_meoh" in fallback_df.columns:
+                        sort_cols = ["lcomeoh_usd_per_t_meoh"]
+                        ascending = [True]
+                        if "warning_count" in fallback_df.columns:
+                            sort_cols.append("warning_count")
+                            ascending.append(True)
+                        if "total_capex_usd" in fallback_df.columns:
+                            sort_cols.append("total_capex_usd")
+                            ascending.append(True)
+                        fallback_df = fallback_df.sort_values(sort_cols, ascending=ascending)
+
+                    fallback_row = fallback_df.iloc[0]
+                    st.dataframe(
+                        fallback_row.to_frame(name="value"),
+                        use_container_width=True,
+                    )
+
+                feasible_count = (
+                    int(results_df["feasible"].fillna(False).astype(bool).sum())
+                    if "feasible" in results_df.columns
+                    else None
+                )
+
+                summary_payload = {
+                    "evaluated_cases": int(len(results_df)),
+                    "feasible_cases": feasible_count,
+                    "has_best_row": best_row is not None,
+                }
+                st.write(summary_payload)
+
+                st.info(
+                    "Use the shortlist together with the diagnostic KPIs. A mathematically best row is not automatically a trustworthy row if "
+                    "it still shows high out-of-domain fraction, severe curtailment, or low utilization."
+                )
+
+            with right:
+                if "lcomeoh_usd_per_t_meoh" in results_df.columns:
+                    try:
+                        st.plotly_chart(
+                            heatmap(results_df, z_col="lcomeoh_usd_per_t_meoh"),
+                            use_container_width=True,
+                        )
+                    except Exception as exc:
+                        st.warning(f"Heatmap could not be rendered: {exc}")
+                else:
+                    st.warning(
+                        "The optimization results do not contain 'lcomeoh_usd_per_t_meoh', so the heatmap cannot be displayed."
+                    )
+
+            st.subheader("Ranked shortlist")
+
+            shortlist = results_df.copy()
+            sort_cols = []
+            ascending = []
+
+            if "lcomeoh_usd_per_t_meoh" in shortlist.columns:
+                sort_cols.append("lcomeoh_usd_per_t_meoh")
+                ascending.append(True)
+            if "warning_count" in shortlist.columns:
+                sort_cols.append("warning_count")
+                ascending.append(True)
+            if "total_capex_usd" in shortlist.columns:
+                sort_cols.append("total_capex_usd")
+                ascending.append(True)
+
+            if sort_cols:
+                shortlist = shortlist.sort_values(sort_cols, ascending=ascending)
+
+            priority_cols = [
+                "case_name",
+                "electrolyzer_power_mw",
+                "module_count",
+                "storage_kg_h2",
+                "target_h2_kg_per_h",
+                "annual_methanol_t",
+                "ptmeoh_utilization_factor",
+                "renewable_utilization_fraction",
+                "curtailment_fraction",
+                "surrogate_out_of_domain_fraction",
+                "warning_count",
+                "feasible",
+                "lcomeoh_usd_per_t_meoh",
+                "npv_usd",
+            ]
+            priority_cols = [c for c in priority_cols if c in shortlist.columns]
+
+            if priority_cols:
+                st.dataframe(shortlist[priority_cols].head(20), use_container_width=True)
+            else:
+                st.warning(
+                    "The optimization results table does not contain the expected shortlist columns. Showing the first rows of the raw results table instead."
+                )
+                st.dataframe(shortlist.head(20), use_container_width=True)
+
+            with st.expander("Raw optimization results", expanded=False):
+                st.dataframe(results_df, use_container_width=True)
 with tab4:
     if sensitivities is None:
         st.info("Press 'Run sensitivities' to generate the tornado view.")
