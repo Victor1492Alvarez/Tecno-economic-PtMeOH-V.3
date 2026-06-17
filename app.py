@@ -391,22 +391,55 @@ def attach_streamlit_telemetry_handler() -> None:
         logger_obj.setLevel(logging.INFO)
 
 
-def format_progress_label(stage: str, current: int, total: int) -> tuple[float, str]:
+def format_progress_label(
+    stage: str,
+    current: int,
+    total: int,
+    profile_meta: dict | None = None,
+) -> tuple[float, str]:
     safe_total = max(int(total), 1)
     safe_current = max(0, min(int(current), safe_total))
     pct = 100.0 * safe_current / safe_total
     stage_key = str(stage).lower().strip()
 
     if stage_key == "simulation":
-        hours_done = safe_current
-        hours_total = safe_total
-        days_done = hours_done / 24.0
-        days_total = hours_total / 24.0
-        label = (
-            f"Annual simulation | {pct:5.1f}% | "
-            f"{hours_done:,}/{hours_total:,} simulated h | "
-            f"{days_done:,.2f}/{days_total:,.2f} days"
-        )
+        profile_meta = profile_meta or {}
+        median_step_h = profile_meta.get("median_step_h")
+        expanded_to_hourly = bool(profile_meta.get("expanded_to_hourly", False))
+        looks_daily = bool(profile_meta.get("looks_daily", False))
+
+        try:
+            step_h = float(median_step_h) if median_step_h is not None else 1.0
+        except Exception:
+            step_h = 1.0
+
+        if step_h <= 0:
+            step_h = 1.0
+
+        simulated_hours_done = safe_current * step_h
+        simulated_hours_total = safe_total * step_h
+        simulated_days_done = simulated_hours_done / 24.0
+        simulated_days_total = simulated_hours_total / 24.0
+
+        if expanded_to_hourly or step_h <= 1.5:
+            label = (
+                f"Annual simulation | {pct:5.1f}% | "
+                f"{safe_current:,}/{safe_total:,} hourly steps | "
+                f"{simulated_hours_done:,.0f}/{simulated_hours_total:,.0f} simulated h | "
+                f"{simulated_days_done:,.2f}/{simulated_days_total:,.2f} days"
+            )
+        elif looks_daily or step_h >= 23.0:
+            label = (
+                f"Annual simulation | {pct:5.1f}% | "
+                f"{safe_current:,}/{safe_total:,} daily steps | "
+                f"{simulated_days_done:,.0f}/{simulated_days_total:,.0f} simulated days"
+            )
+        else:
+            label = (
+                f"Annual simulation | {pct:5.1f}% | "
+                f"{safe_current:,}/{safe_total:,} steps | "
+                f"{simulated_hours_done:,.1f}/{simulated_hours_total:,.1f} simulated h"
+            )
         return pct, label
 
     if stage_key == "optimization":
@@ -419,8 +452,6 @@ def format_progress_label(stage: str, current: int, total: int) -> tuple[float, 
 
     label = f"{stage} | {pct:5.1f}% | {safe_current:,}/{safe_total:,}"
     return pct, label
-
-
 def run_simulation(case, progress_callback: ProgressCallback = None):
     if hasattr(runner, "run_simulation"):
         try:
@@ -1636,12 +1667,16 @@ def fail_runtime_feedback(title: str, exc: Exception) -> None:
 
 
 def ui_progress(stage: str, current: int, total: int) -> None:
-    pct, label = format_progress_label(stage, current, total)
+    pct, label = format_progress_label(
+        stage,
+        current,
+        total,
+        profile_meta=effective_profile_meta if str(stage).lower().strip() == "simulation" else None,
+    )
     progress_bar.progress(min(max(pct / 100.0, 0.0), 1.0), text=label)
     progress_caption.caption(label)
     append_telemetry_line(f"PROGRESS | {label}")
     refresh_runtime_panels()
-
 
 action_col1, action_col2, action_col3, action_col4 = st.columns(4)
 
