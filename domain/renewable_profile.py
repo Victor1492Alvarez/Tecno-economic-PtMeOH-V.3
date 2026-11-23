@@ -377,6 +377,8 @@ def normalize_renewable_profile(
 
     was_sorted = df["timestamp"].is_monotonic_increasing
     df = df.sort_values("timestamp").reset_index(drop=True)
+    # Keep renewable values aligned with their sorted timestamps.
+    raw_values = df["raw_value"].to_numpy(dtype=float)
 
     daily_energy_units = unit_mode in (
         "MWh/day",
