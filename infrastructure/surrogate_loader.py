@@ -610,16 +610,18 @@ class SurrogateBundle:
             "is not recognized; H2 was passed in kg/h "
             "without conversion."
         )
+    
     def predict(self, h2_flow: Any) -> pd.DataFrame:
         """
         Predict without clipping values to declared training ranges.
 
-        Range warnings accompany results.
-        Predictor failures are not replaced by mock predictions here.
+        h2_flow is the engine's H2 flow in kg/h. It is converted to the
+        model's declared input unit before prediction and range checks.
         """
 
         array = _input_array(h2_flow)
-        result = self.predictor.predict(array).copy()
+        model_input, conversion_message = self._convert_input(array)
+        result = self.predictor.predict(model_input).copy()
 
         predictions = _numeric_vector(
             result["Prediction"],
@@ -631,8 +633,11 @@ class SurrogateBundle:
         output_status: list[bool | None] = []
         row_warnings: list[str] = []
 
-        for input_value, output_value in zip(array, predictions):
+        for input_value, output_value in zip(model_input, predictions):
             messages = list(self.warnings)
+
+            if conversion_message:
+                messages.append(conversion_message)
 
             messages.extend(
                 model_value_warnings(
@@ -676,6 +681,7 @@ class SurrogateBundle:
                 " | ".join(dict.fromkeys(messages))
             )
 
+        result["Input H2 kg/h"] = array
         result["Input In Domain"] = pd.array(
             input_status,
             dtype="boolean",
@@ -688,7 +694,6 @@ class SurrogateBundle:
         result["Warnings"] = row_warnings
 
         return result
-
 
 # PATCH: new class. Applies the packaged scaler before the Gaussian
 # process regressor, as the model's own .py file does.
