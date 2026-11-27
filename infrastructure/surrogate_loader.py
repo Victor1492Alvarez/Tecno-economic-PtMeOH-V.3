@@ -581,7 +581,35 @@ class SurrogateBundle:
             return True
 
         return None
+    
+    def _convert_input(
+        self,
+        h2_kg_per_h: np.ndarray,
+    ) -> tuple[np.ndarray, str | None]:
+        """Convert the engine's H2 flow in kg/h to the model's unit."""
 
+        unit = self.input_unit.strip().lower().replace(" ", "")
+
+        if unit in {"", "kg/h", "kg/hr", "kg_per_h"}:
+            return h2_kg_per_h, None
+
+        if unit in {"kmol/h", "kmol/hr"}:
+            return h2_kg_per_h / MOLAR_MASS_H2_KG_PER_KMOL, None
+
+        if unit in {"mol/h", "mol/hr"}:
+            return (
+                h2_kg_per_h * 1000.0 / MOLAR_MASS_H2_KG_PER_KMOL,
+                None,
+            )
+
+        if unit in {"t/h", "t/hr"}:
+            return h2_kg_per_h / 1000.0, None
+
+        return h2_kg_per_h, (
+            f"{self.model_name}: input unit {self.input_unit!r} "
+            "is not recognized; H2 was passed in kg/h "
+            "without conversion."
+        )
     def predict(self, h2_flow: Any) -> pd.DataFrame:
         """
         Predict without clipping values to declared training ranges.
