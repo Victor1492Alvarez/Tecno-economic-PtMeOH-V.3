@@ -582,6 +582,47 @@ def install_model_zip(
                     f"runtime {suffix} file. Found {len(candidates)}."
                 )
 
+                if unit_declaration is not None:
+            metadata_path = stage / "metadata.json"
+            metadata_payload: dict[str, Any] = {}
+
+            if metadata_path.is_file():
+                loaded = json.loads(
+                    metadata_path.read_text(encoding="utf-8-sig")
+                )
+
+                if not isinstance(loaded, dict):
+                    raise ValueError(
+                        "metadata.json must contain a JSON object."
+                    )
+
+                metadata_payload = loaded
+
+            for key in ("input_unit", "output_unit"):
+                existing = metadata_payload.get(key)
+
+                if existing and existing != unit_declaration[key]:
+                    installation_warnings.append(
+                        f"metadata.json declared {key}={existing!r}; "
+                        f"the selected value "
+                        f"{unit_declaration[key]!r} was applied."
+                    )
+
+            metadata_payload.update(
+                {
+                    "quantity_kind": unit_declaration["quantity_kind"],
+                    "input_unit": unit_declaration["input_unit"],
+                    "output_unit": unit_declaration["output_unit"],
+                    "unit_declared_by": "user_at_install",
+                    "unit_declared_utc": unit_declaration["declared_utc"],
+                }
+            )
+
+            metadata_path.write_text(
+                json_text(metadata_payload),
+                encoding="utf-8",
+            )
+         
         if persist_enabled:
             archive_digest = hashlib.sha256(
                 archive_bytes
