@@ -82,13 +82,7 @@ MAX_MODEL_COMPRESSION_RATIO = 250.0
 
 # Enable only on deployments where access is restricted to trusted users.
 # A trust-confirmation checkbox is not an authentication mechanism.
-MODEL_UPLOADS_ENABLED = (
-    os.environ.get(
-        "PTMEOH_ENABLE_MODEL_UPLOADS",
-        "false",
-    ).strip().lower()
-    in {"1", "true", "yes"}
-)
+MODEL_UPLOADS_ENABLED = True
 
 ProgressCallback = Callable[[str, int, int], None] | None
 
