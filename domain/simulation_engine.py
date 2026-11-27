@@ -424,35 +424,12 @@ class SimulationEngine:
                     )
                     result["co2_stoichiometric_fallback"] = 1.0
                 else:
-                    # CO2FeedInputs.output_unit is an explicit user setting.
-                    row = by_name.loc[name]
-                    declared = bundle.output_unit.strip()
-
-                    if declared and "_or_" not in declared:
-                        if (
-                            declared.lower().replace(" ", "")
-                            != co2_settings.output_unit.lower()
-                        ):
-                            raise ValueError(
-                                "The selected CO2 output unit conflicts "
-                                "with the model's declared output unit."
-                            )
-
-                    value = float(
-                        mass_flow_to_kg_per_h(
-                            float(row["prediction"]),
-                            co2_settings.output_unit,
-                            MOLAR_MASS_CO2_KG_PER_KMOL,
-                        )
-                    )
-
-                    if value < 0 and process_on:
-                        raise ValueError(
-                            "The CO2 model predicted negative feed."
-                        )
-
-                    result["co2_feed_kg_per_h"] = (
-                        value if process_on else 0.0
+                    # The declared model unit takes precedence. The TEA
+                    # setting is only the fallback for an undeclared unit.
+                    result["co2_feed_kg_per_h"] = mass_kg_per_h(
+                        name,
+                        co2_settings.output_unit,
+                        MOLAR_MASS_CO2_KG_PER_KMOL,
                     )
                     result["co2_stoichiometric_fallback"] = 0.0
 
