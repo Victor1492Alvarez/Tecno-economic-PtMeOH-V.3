@@ -269,7 +269,10 @@ class SimulationEngine:
                     f"the historical {expected_unit} convention "
                     "was assumed. Verify before technical use."
                 )
-
+            if unit.lower().replace(" ", "") in {"mol/h", "mol/hr"}:
+                value = value / 1000.0
+                unit = "kmol/h"
+            
             return value, unit
 
         def power_w(name: str, signed: bool = False) -> float:
