@@ -582,7 +582,7 @@ def install_model_zip(
                     f"runtime {suffix} file. Found {len(candidates)}."
                 )
 
-                if unit_declaration is not None:
+        if unit_declaration is not None:
             metadata_path = stage / "metadata.json"
             metadata_payload: dict[str, Any] = {}
 
