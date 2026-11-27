@@ -1598,6 +1598,41 @@ with st.sidebar:
             else:
                 target_model_name = target_selection
 
+                        quantity_kind = st.radio(
+                "Physical quantity predicted by this model",
+                ["Select...", "Molar flow", "Energy duty"],
+                key="install_quantity_kind",
+            )
+
+            input_unit_choice = None
+
+            if quantity_kind == "Molar flow":
+                output_unit_choice = st.radio(
+                    "Unit (input H2 and output share it)",
+                    ["mol/h", "kmol/h"],
+                    horizontal=True,
+                    key="install_unit_molar",
+                )
+                input_unit_choice = output_unit_choice
+
+            elif quantity_kind == "Energy duty":
+                output_unit_choice = st.radio(
+                    "Duty unit",
+                    ["W", "kW"],
+                    horizontal=True,
+                    key="install_unit_duty",
+                )
+                input_unit_choice = st.radio(
+                    "H2 input unit of this model",
+                    ["mol/h", "kmol/h"],
+                    horizontal=True,
+                    key="install_unit_duty_input",
+                )
+            else:
+                output_unit_choice = None
+
+            unit_choice = output_unit_choice
+            
             model_zip = st.file_uploader(
                 "Model ZIP",
                 type=["zip"],
