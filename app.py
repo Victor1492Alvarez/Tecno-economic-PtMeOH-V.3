@@ -1598,7 +1598,7 @@ with st.sidebar:
             else:
                 target_model_name = target_selection
 
-                        quantity_kind = st.radio(
+            quantity_kind = st.radio(
                 "Physical quantity predicted by this model",
                 ["Select...", "Molar flow", "Energy duty"],
                 key="install_quantity_kind",
