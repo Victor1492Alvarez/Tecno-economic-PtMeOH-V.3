@@ -1668,6 +1668,18 @@ with st.sidebar:
                         target_model_name,
                         model_zip,
                         persist_assets,
+                        unit_declaration={
+                            "quantity_kind": (
+                                "molar_flow"
+                                if quantity_kind == "Molar flow"
+                                else "energy_duty"
+                            ),
+                            "input_unit": input_unit_choice,
+                            "output_unit": output_unit_choice,
+                            "declared_utc": datetime.now(
+                                timezone.utc
+                            ).isoformat(),
+                        },
                     )
 
                     runner.engine.clear_surrogate_cache()
