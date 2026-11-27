@@ -666,6 +666,7 @@ def install_model_zip(
             "written_count": len(written),
             "archive_saved": persist_enabled,
             "warnings": installation_warnings,
+            "unit_declaration": unit_declaration,
         }
 
     finally:
