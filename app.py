@@ -2163,6 +2163,11 @@ if profile_selection_ready and not case_build_errors:
 
         effective_profile_df = case.renewable_profile
         effective_profile_meta = case.provenance["profile_meta"]
+        time_step_h=(
+                active_profile_meta.get("time_step_h")
+                if active_profile_meta is not None
+                else None
+        ),
 
         report = inspect_case_inputs(case)
         case_build_errors.extend(report.errors)
