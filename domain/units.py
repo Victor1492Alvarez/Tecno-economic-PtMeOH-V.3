@@ -264,7 +264,18 @@ def mass_flow_to_kg_per_h(
             values,
             molar_mass_kg_per_kmol,
         )
+    if normalized_unit in {"mol/h", "mol/hr"}:
+        if molar_mass_kg_per_kmol is None:
+            raise ValueError(
+                "Molar mass is required to convert mol/h to kg/h."
+            )
 
+        molar_mass = _positive_scalar(
+            molar_mass_kg_per_kmol,
+            "Molar mass [kg/kmol]",
+        )
+        return _scale(values, molar_mass / 1000.0)
+    
     raise ValueError(
         f"Unsupported mass-flow unit: {unit!r}. "
         "Supported units: kg/h, t/h, kg/s, kmol/h."
