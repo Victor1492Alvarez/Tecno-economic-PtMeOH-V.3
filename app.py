@@ -523,6 +523,10 @@ def install_model_zip(
                     )
                 ):
                     continue
+                    
+                if Path(filename).suffix.lower() not in allowed_suffixes:
+                    ignored_files.append(filename)
+                    continue
 
                 mode = member.external_attr >> 16
 
@@ -545,11 +549,6 @@ def install_model_zip(
                     raise ValueError(
                         "The model archive has an excessive "
                         "compression ratio."
-                    )
-
-                if Path(filename).suffix.lower() not in allowed_suffixes:
-                    raise ValueError(
-                        f"Unsupported model-package file: {filename!r}."
                     )
 
                 normalized_name = filename.casefold()
