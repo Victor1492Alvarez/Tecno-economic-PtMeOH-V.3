@@ -8,7 +8,6 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
-from domain.units import MOLAR_MASS_H2_KG_PER_KMOL
 
 from domain.validators import model_value_warnings
 from infrastructure.model_registry import ModelRegistry
@@ -581,47 +580,21 @@ class SurrogateBundle:
             return True
 
         return None
-    
-    def _convert_input(
-        self,
-        h2_kg_per_h: np.ndarray,
-    ) -> tuple[np.ndarray, str | None]:
-        """Convert the engine's H2 flow in kg/h to the model's unit."""
 
-        unit = self.input_unit.strip().lower().replace(" ", "")
-
-        if unit in {"", "kg/h", "kg/hr", "kg_per_h"}:
-            return h2_kg_per_h, None
-
-        if unit in {"kmol/h", "kmol/hr"}:
-            return h2_kg_per_h / MOLAR_MASS_H2_KG_PER_KMOL, None
-
-        if unit in {"mol/h", "mol/hr"}:
-            return (
-                h2_kg_per_h * 1000.0 / MOLAR_MASS_H2_KG_PER_KMOL,
-                None,
-            )
-
-        if unit in {"t/h", "t/hr"}:
-            return h2_kg_per_h / 1000.0, None
-
-        return h2_kg_per_h, (
-            f"{self.model_name}: input unit {self.input_unit!r} "
-            "is not recognized; H2 was passed in kg/h "
-            "without conversion."
-        )
-    
     def predict(self, h2_flow: Any) -> pd.DataFrame:
         """
         Predict without clipping values to declared training ranges.
 
-        h2_flow is the engine's H2 flow in kg/h. It is converted to the
-        model's declared input unit before prediction and range checks.
+        h2_flow must already be expressed in this model's input unit.
+        MultiSurrogateManager performs that conversion from the
+        physical H2 flow in kg/h before calling this method.
+
+        Range warnings accompany results.
+        Predictor failures are not replaced by mock predictions here.
         """
 
         array = _input_array(h2_flow)
-        model_input, conversion_message = self._convert_input(array)
-        result = self.predictor.predict(model_input).copy()
+        result = self.predictor.predict(array).copy()
 
         predictions = _numeric_vector(
             result["Prediction"],
@@ -633,11 +606,8 @@ class SurrogateBundle:
         output_status: list[bool | None] = []
         row_warnings: list[str] = []
 
-        for input_value, output_value in zip(model_input, predictions):
+        for input_value, output_value in zip(array, predictions):
             messages = list(self.warnings)
-
-            if conversion_message:
-                messages.append(conversion_message)
 
             messages.extend(
                 model_value_warnings(
@@ -681,7 +651,6 @@ class SurrogateBundle:
                 " | ".join(dict.fromkeys(messages))
             )
 
-        result["Input H2 kg/h"] = array
         result["Input In Domain"] = pd.array(
             input_status,
             dtype="boolean",
@@ -695,8 +664,7 @@ class SurrogateBundle:
 
         return result
 
-# PATCH: new class. Applies the packaged scaler before the Gaussian
-# process regressor, as the model's own .py file does.
+
 class ScaledGPRPredictor:
     """Apply the packaged scaler before a Gaussian-process regressor."""
 
@@ -719,8 +687,8 @@ def _extract_predictor_candidate(model_object: Any) -> Any:
     if callable(getattr(model_object, "predict", None)):
         return model_object
 
-    # PATCH: packaged dictionaries with a scaler and a GPR must be
-    # evaluated with scaling; otherwise the GPR would receive raw inputs.
+    # Packaged dictionaries with a scaler and a GPR must be evaluated
+    # with scaling; otherwise the GPR would receive unscaled inputs.
     if isinstance(model_object, dict):
         scaler = model_object.get("scaler")
         gpr = model_object.get("gpr")
@@ -866,8 +834,9 @@ def load_surrogate_bundle(
     if not _lookup(parameters, metadata, "input_unit"):
         messages.append(
             f"{model_name}: input units are not declared. "
-            "The caller must verify compatibility; "
-            "no automatic unit conversion is applied."
+            "The legacy kg/h convention will be assumed. "
+            "Declare the model's input unit when installing "
+            "the package."
         )
 
     output_unit = _lookup(
