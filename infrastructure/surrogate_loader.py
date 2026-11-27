@@ -661,9 +661,41 @@ class SurrogateBundle:
         return result
 
 
+# PATCH: new class. Applies the packaged scaler before the Gaussian
+# process regressor, as the model's own .py file does.
+class ScaledGPRPredictor:
+    """Apply the packaged scaler before a Gaussian-process regressor."""
+
+    def __init__(self, scaler: Any, gpr: Any):
+        self.scaler = scaler
+        self.gpr = gpr
+
+    def predict(self, values: Any):
+        array = np.asarray(values, dtype=float)
+
+        if array.ndim == 1:
+            array = array.reshape(-1, 1)
+
+        scaled = self.scaler.transform(array)
+
+        return self.gpr.predict(scaled, return_std=True)
+
+
 def _extract_predictor_candidate(model_object: Any) -> Any:
     if callable(getattr(model_object, "predict", None)):
         return model_object
+
+    # PATCH: packaged dictionaries with a scaler and a GPR must be
+    # evaluated with scaling; otherwise the GPR would receive raw inputs.
+    if isinstance(model_object, dict):
+        scaler = model_object.get("scaler")
+        gpr = model_object.get("gpr")
+
+        if (
+            callable(getattr(scaler, "transform", None))
+            and callable(getattr(gpr, "predict", None))
+        ):
+            return ScaledGPRPredictor(scaler, gpr)
 
     if isinstance(model_object, dict):
         preferred_keys = [
