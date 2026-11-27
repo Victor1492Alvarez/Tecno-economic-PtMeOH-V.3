@@ -664,9 +664,10 @@ def install_model_zip(
             "target_dir": str(target_dir),
             "written_files": sorted(written),
             "written_count": len(written),
+            "ignored_files": sorted(ignored_files),
+            "unit_declaration": unit_declaration,
             "archive_saved": persist_enabled,
             "warnings": installation_warnings,
-            "unit_declaration": unit_declaration,
         }
 
     finally:
