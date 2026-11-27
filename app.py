@@ -468,6 +468,7 @@ def install_model_zip(
 
     written: list[str] = []
     installation_warnings: list[str] = []
+    ignored_files: list[str] = []
     backup_created = False
 
     allowed_suffixes = {
