@@ -234,13 +234,19 @@ class MultiSurrogateManager:
                 False,
             )
 
-        if normalized == "kmol/h":
+        if normalized in {"kmol/h", "kmol/hr"}:
             return (
                 h2_flow_kg_per_h / MOLAR_MASS_H2_KG_PER_KMOL,
                 "kmol/h",
                 False,
             )
 
+        if normalized in {"mol/h", "mol/hr"}:
+            return (
+                h2_flow_kg_per_h * 1000.0 / MOLAR_MASS_H2_KG_PER_KMOL,
+                "mol/h",
+                False,
+            )
         raise ValueError(
             f"Model {bundle.model_name!r} declares unsupported "
             f"H2 input units {declared_unit!r}. "
