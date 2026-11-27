@@ -8,6 +8,7 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+from domain.units import MOLAR_MASS_H2_KG_PER_KMOL
 
 from domain.validators import model_value_warnings
 from infrastructure.model_registry import ModelRegistry
