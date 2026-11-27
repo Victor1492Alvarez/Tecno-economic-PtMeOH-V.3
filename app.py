@@ -1647,7 +1647,10 @@ with st.sidebar:
 
             if st.button(
                 "Install or replace selected model package",
-                disabled=not trusted_source_confirmed,
+                disabled=(
+                    not trusted_source_confirmed
+                    or unit_choice is None
+                ),
                 use_container_width=True,
             ):
                 try:
