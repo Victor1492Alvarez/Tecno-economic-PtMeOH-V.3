@@ -425,6 +425,7 @@ def install_model_zip(
     model_name: str,
     uploaded_zip,
     persist_enabled: bool,
+    unit_declaration: dict | None = None,
 ) -> dict:
     """
     Replace one complete trusted model package.
